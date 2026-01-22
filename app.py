@@ -51,12 +51,15 @@ if prompt := st.chat_input("请问关于 2026 赛季的问题..."):
                 
                 if response.status_code == 200:
                     data = response.json()
+                    # ... (在获取到 data 之后) ...
                     answer = data["answer"]
                     source = data.get("source", "")
                     
-                    # 组合显示的文本 (把参考资料也加上)
                     full_response = answer
-                    if source:
+                    
+                    # ✅ 优化逻辑：只有当 source 有效时，才加小尾巴
+                    # 假设后端返回的空提示是 "没有找到相关资料..."
+                    if source and "没有找到相关资料" not in source:
                         full_response += f"\n\n---\n**📚 参考资料**: {source}"
                     
                     st.markdown(full_response)
