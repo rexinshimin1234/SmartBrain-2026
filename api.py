@@ -1,76 +1,71 @@
 import os
-import chromadb
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import List, Dict  # ✅ 新增：用于定义列表和字典类型
+import chromadb
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# 1. 初始化环境 (和之前一样)
+# 1. 加载环境变量
 load_dotenv()
-app = FastAPI(title="SmartBrain API", description="专业的 RAG 知识库接口")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
-# 2. 准备连接 (全局变量，启动时只连一次)
-#    注意：这里不需要 @st.cache_resource 了，因为 API 服务是一直开着的
-print("正在初始化 SmartBrain 后端引擎...")
-try:
-    # 连电话
-    client = OpenAI(
-        api_key=os.getenv("DEEPSEEK_API_KEY"), 
-        base_url="https://api.deepseek.com"
-    )
-    # 连书架
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")
-    collection = chroma_client.get_collection(name="smartbrain_knowledge")
-    print("✅ 引擎启动成功！")
-except Exception as e:
-    print(f"❌ 启动失败: {e}")
+# 2. 初始化核心组件
+app = FastAPI()
+client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+chroma_client = chromadb.PersistentClient(path="chroma_db")
+collection = chroma_client.get_or_create_collection(name="smartbrain_docs")
 
-# 3. 定义“安检标准” (Data Model)
-#    用户发来的数据必须长这样：{"query": "你的问题"}
+# 3. ✅ 升级请求模型 (这是关键！)
 class ChatRequest(BaseModel):
     query: str
+    # 新增 history 字段，它是一个列表，里面装着字典 (role, content)
+    # 默认值为空列表 []，防止报错
+    history: List[Dict[str, str]] = [] 
 
-# 4. 核心接口：聊天 (POST)
 @app.post("/chat")
 def chat_endpoint(request: ChatRequest):
-    """
-    接收用户的问题，进行 RAG 搜索，返回 AI 的回答
-    """
-    user_query = request.query
-    
-    # --- RAG 逻辑 (完全复用昨天的代码) ---
-    print(f"收到问题: {user_query}")
-    
-    # A. 搜库
-    results = collection.query(query_texts=[user_query], n_results=3)
-    retrieved_text = "\n\n".join(results['documents'][0])
-    
-    if not retrieved_text:
-        context_str = "（无已知信息）"
-    else:
-        context_str = retrieved_text
-
-    # B. 拼 Prompt
-    system_prompt = f"""
-    你是一个专业的峡谷之巅客服助手。请根据【参考资料】回答。
-    【参考资料】：
-    {context_str}
-    """
-
-    # C. 问 AI
-    response = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_query}
-        ]
+    # 1. 先去数据库查资料 (只查最新的问题)
+    results = collection.query(
+        query_texts=[request.query],
+        n_results=1
     )
     
-    answer = response.choices[0].message.content
+    if not results['documents'][0]:
+        context = "没有找到相关资料，请尝试用通用知识回答。"
+    else:
+        context = results['documents'][0][0]
+
+    # 2. ✅ 构建完整的对话历史
+    # 第一条：系统提示词 (包含最新的参考资料)
+    messages = [
+        {
+            "role": "system", 
+            "content": f"你是一个智能助手 SmartBrain。请根据以下参考资料回答用户问题：\n\n【参考资料】\n{context}"
+        }
+    ]
     
-    # 5. 返回标准 JSON
-    return {
-        "query": user_query,
-        "answer": answer,
-        "source": context_str # 把查到的资料也返回去，方便调试
-    }
+    # 中间：把前端传过来的历史记录插进去 (让 AI 知道上下文)
+    # 我们只取最近的 4 轮对话，防止 Token 爆炸
+    messages.extend(request.history[-8:]) 
+    
+    # 最后：加上用户最新的问题
+    messages.append({"role": "user", "content": request.query})
+
+    # 3. 呼叫 DeepSeek
+    try:
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=messages,
+            stream=False
+        )
+        return {
+            "answer": response.choices[0].message.content,
+            "source": context
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)

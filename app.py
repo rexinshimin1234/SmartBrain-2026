@@ -1,61 +1,73 @@
 import streamlit as st
-import requests  # 👈 新朋友：专门负责发 HTTP 请求的
+import requests
+import json
 
-# 1. 基础配置
-st.set_page_config(page_title="SmartBrain 2.0", page_icon="🚀")
-st.title("🚀 SmartBrain (API版)")
+st.title("🚀 SmartBrain Pro (记忆版)")
 
-# 2. 初始化 Session State
+# --- 核心逻辑：初始化消息历史 ---
+# st.session_state 是 Streamlit 的全局缓存
 if "messages" not in st.session_state:
-    st.session_state["messages"] = [
-        {"role": "assistant", "content": "我是 SmartBrain 2.0，我的大脑在云端 (FastAPI)！"}
-    ]
-
-# 3. 渲染历史记录
+    st.session_state.messages = []
+    # 可以在这里加一个开场白
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": "我是 SmartBrain，有什么可以帮你的吗？"
+    })
+# --- 核心逻辑：把历史聊天记录画出来 ---
 for msg in st.session_state.messages:
+    # st.chat_message 能够自动区分 "user" (右边) 和 "assistant" (左边)
     with st.chat_message(msg["role"]):
-        st.write(msg["content"])
-
-# 4. 处理输入
-user_input = st.chat_input("请输入问题...")
-
-if user_input:
-    # --- 显示用户输入 ---
+        st.markdown(msg["content"])
+# --- 核心逻辑：处理用户输入 ---
+# st.chat_input 是专门的聊天输入框，比 st.text_input 更像微信
+if prompt := st.chat_input("请问关于 2026 赛季的问题..."):
+    
+    # 1. 处理用户消息
+    # 存入历史
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    # 立刻显示在界面上
     with st.chat_message("user"):
-        st.write(user_input)
-    st.session_state.messages.append({"role": "user", "content": user_input})
+        st.markdown(prompt)
 
-    # --- 呼叫后端 API (核心变化) ---
+    # 2. 呼叫后端 API
     with st.chat_message("assistant"):
-        status_box = st.empty()
-        status_box.markdown("📡 **正在连接后端 API...**")
+        with st.spinner("思考中..."):
+            try:
+                # 发送请求给 FastAPI
+                history_to_send = [
+                    {"role": m["role"], "content": m["content"]} 
+                    for m in st.session_state.messages[:-1]
+                ]
 
-        try:
-            # 【重点】这里不再自己算，而是发 POST 请求给 api.py
-            # 记得确保你的 uvicorn api:app 还在另一个终端里跑着！
-            response = requests.post(
-                "http://127.0.0.1:8000/chat", 
-                json={"query": user_input}  # 发送的数据格式必须和后端定义的 Pydantic 一样
-            )
-            
-            if response.status_code == 200:
-                # 拿到 JSON 结果
-                data = response.json()
-                answer = data["answer"]
+                # 发送请求给 FastAPI
+                response = requests.post(
+                    "http://127.0.0.1:8000/chat", 
+                    json={
+                        "query": prompt,
+                        "history": history_to_send  # ✅ 这里把历史带上！
+                    },
+                    timeout=30
+                )
                 
-                # 更新界面
-                status_box.markdown(answer)
-                st.session_state.messages.append({"role": "assistant", "content": answer})
-                
-                # (可选) 在侧边栏显示查到的参考资料，方便调试
-                # (可选) 在侧边栏显示查到的参考资料
-                with st.sidebar:
-                    st.write("🔍 **本次参考资料：**")
-                    # ❌ 删掉这行: st.json(data["source"])
-                    # ✅ 改成这行:
-                    st.markdown(data["source"])
-            else:
-                status_box.error(f"❌ 服务器报错: {response.text}")
-                
-        except Exception as e:
-            status_box.error(f"❌ 无法连接后端: {e}")
+                if response.status_code == 200:
+                    data = response.json()
+                    answer = data["answer"]
+                    source = data.get("source", "")
+                    
+                    # 组合显示的文本 (把参考资料也加上)
+                    full_response = answer
+                    if source:
+                        full_response += f"\n\n---\n**📚 参考资料**: {source}"
+                    
+                    st.markdown(full_response)
+                    
+                    # 3. 存入 AI 的回复到历史
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": full_response
+                    })
+                else:
+                    st.error(f"后端报错: {response.status_code}")
+                    
+            except Exception as e:
+                st.error(f"连接失败: {str(e)}")
