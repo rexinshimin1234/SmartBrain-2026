@@ -3,6 +3,19 @@ import requests
 import json
 
 st.title("🚀 SmartBrain Pro (记忆版)")
+# --- 侧边栏配置 ---
+with st.sidebar:
+    st.header("⚙️ 大脑配置")
+    selected_persona = st.selectbox(
+        "选择 AI 性格",
+        ["默认专家", "毒舌", "软萌"],
+        index=0
+    )
+    
+    # 一个清除记忆的按钮，方便测试
+    if st.button("🗑️ 清除记忆"):
+        st.session_state.messages = []
+        st.rerun()
 
 # --- 核心逻辑：初始化消息历史 ---
 # st.session_state 是 Streamlit 的全局缓存
@@ -44,7 +57,8 @@ if prompt := st.chat_input("请问关于 2026 赛季的问题..."):
                     "http://127.0.0.1:8000/chat", 
                     json={
                         "query": prompt,
-                        "history": history_to_send  # ✅ 这里把历史带上！
+                        "history": history_to_send , # ✅ 这里把历史带上！
+                        "persona": selected_persona  # ✅ 把侧边栏选的性格传过去
                     },
                     timeout=30
                 )
