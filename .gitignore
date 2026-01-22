@@ -1,0 +1,25 @@
+# --- 核心安全 ---
+.env
+__pycache__/
+*.pyc
+
+# --- 数据库 ---
+chroma_db/
+chroma_db
+*.sqlite3
+
+# --- 虚拟环境 (最大的嫌疑人) ---
+venv/
+.venv/
+Lib/
+Scripts/
+Include/
+
+# --- IDE 配置 ---
+.vscode/
+.idea/
+
+# --- 其他可能的大文件 ---
+*.pdf
+*.mp4
+local_model/
